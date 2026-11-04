@@ -1,0 +1,122 @@
+name: PR correctness
+
+on:
+  pull_request_target:   # token has write access even for PRs from forks; we never check out PR code, so it's safe
+    types: [opened, reopened, edited, synchronize, assigned, unassigned, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-correctness-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # We check the following conditions:
+  # 1. Every PR has an issue assigned, or mentions an issue in its title or description.
+  # 2. Every PR has one reviewer assigned and mentions at least one other user in its description for review.
+  verify-pr:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const MARKER = '<!-- pr-correctness-check -->';
+            // https://github.com/{org}/{repo}/issues/{number}
+            const TASK_LINK_REGEX = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+(?![\w-])/i;
+            const { owner, repo } = context.repo;
+            const number = context.payload.pull_request.number;
+
+            // Fresh PR data (the event payload can be stale on re-runs)
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+            const title = pr.title || '';
+            // Strip HTML comments so PR template hints don't count as links/mentions
+            const body = (pr.body || '').replace(/<!--[\s\S]*?-->/g, '');
+
+            // Check linked issues to the PR
+            const gql = await github.graphql(
+              `query($owner:String!, $repo:String!, $number:Int!) {
+                 repository(owner:$owner, name:$repo) {
+                   pullRequest(number:$number) {
+                     closingIssuesReferences(first: 1) { totalCount }
+                   }
+                 }
+               }`,
+              { owner, repo, number }
+            );
+            const linkedViaApi = gql.repository.pullRequest.closingIssuesReferences.totalCount > 0;
+            const numberInTitle = /(?<![\w.\/-])#?\d+(?![\w.\/-])/.test(title);
+            const linkInBody = TASK_LINK_REGEX.test(body);
+            const hasTask = linkedViaApi || numberInTitle || linkInBody;
+
+            // Check that PR has assigned 1 reviewer and 1+ mentioned in description
+            const assignees = pr.assignees
+              .filter(a => a.type !== 'Bot')
+              .map(a => a.login.toLowerCase());
+
+            const mentionRe = /(?<![\w\/@`])@([a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38})(?![\w\/@-])/gi; // skips emails and @org/team
+            const author = pr.user.login.toLowerCase();
+            const mentioned = [...new Set([...body.matchAll(mentionRe)].map(m => m[1].toLowerCase()))];
+            // exclude author
+            const extraEngineers = mentioned.filter(u => !assignees.includes(u) && u !== author);
+
+            // Collect problems
+            const problems = [];
+            if (!hasTask) {
+              problems.push(
+                '**No task found.** Do one of the following: link an issue/task to this PR (Development sidebar or `Closes #123`), ' +
+                'put the task number in the PR title (e.g. `#123`), or add a task link to the PR description.'
+              );
+            }
+            if (assignees.length < 1) {
+              problems.push('**No assignee.** Assign one engineer to this PR via the Assignees field.');
+            }
+            if (extraEngineers.length < 1) {
+              problems.push(
+                '**Second engineer is not mentioned.** Mention at least one more engineer (`@username`) in the PR description ' +
+                '(in addition to the assignee).'
+              );
+            }
+
+            // Check existing review to update or avoid repeating
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner, repo, pull_number: number, per_page: 100,
+            });
+            const activeBotReviews = reviews.filter(
+              r => r.state === 'CHANGES_REQUESTED' && r.body && r.body.includes(MARKER)
+            );
+
+            const dismissAll = async (message) => {
+              for (const r of activeBotReviews) {
+                await github.rest.pulls.dismissReview({
+                  owner, repo, pull_number: number, review_id: r.id, message,
+                });
+              }
+            };
+
+            // All good: clear old "request changes"
+            if (problems.length === 0) {
+              await dismissAll('PR requirements are now satisfied.');
+              core.info('PR is correct.');
+              return;
+            }
+
+            // Problems: comment + request changes (without spamming)
+            const reviewBody =
+              `${MARKER}\n### ❌ PR requirements are not met\n\n` +
+              problems.map(p => `- ${p}`).join('\n') +
+              '\n\nThis review is dismissed automatically once the PR is fixed.';
+
+            const alreadyPosted = activeBotReviews.some(r => r.body === reviewBody);
+            if (!alreadyPosted) {
+              await dismissAll('Superseded by an updated check result.');
+              await github.rest.pulls.createReview({
+                owner, repo, pull_number: number,
+                event: 'REQUEST_CHANGES',
+                body: reviewBody,
+              });
+            }
+            // makes the check red so it can be made a required status check
+            core.setFailed(problems.join('\n'));
