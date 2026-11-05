@@ -47,7 +47,8 @@ jobs:
               { owner, repo, number }
             );
             const linkedViaApi = gql.repository.pullRequest.closingIssuesReferences.totalCount > 0;
-            const numberInTitle = /(?<![\w.\/-])#?\d+(?![\w.\/-])/.test(title);
+            const numberInTitleRe = /(?<![\w.\/-])#?\d+(?![\w.\/-])/;
+            const numberInTitle = numberInTitleRe.test(title);
             const linkInBody = TASK_LINK_REGEX.test(body);
             const hasTask = linkedViaApi || numberInTitle || linkInBody;
 
@@ -71,12 +72,12 @@ jobs:
               );
             }
             if (requested_reviewers.length < 1) {
-              problems.push('**No assignee.** Assign one engineer to this PR via the Reviewers field.');
+              problems.push('**No reviewer.** Assign one engineer to this PR via the Reviewers field.');
             }
             if (extraEngineers.length < 1) {
               problems.push(
                 '**Second engineer is not mentioned.** Mention at least one more engineer (`@username`) in the PR description ' +
-                '(in addition to the assignee).'
+                '(in addition to the reviewer).'
               );
             }
 
@@ -95,6 +96,23 @@ jobs:
                 });
               }
             };
+            
+            
+            const ctxSnippet = (str, idx, len) =>
+              str.slice(Math.max(0, idx - 25), idx + len + 25).replace(/\r?\n/g, '\\n');
+            // log debug info
+            core.startGroup('DEBUG info');
+            if (context.payload.assignee) {
+              core.info(`event assignee: ${context.payload.assignee.login}`);
+            }
+            core.info(`event requested_reviewer: ${requested_reviewers}`);
+            core.info(`mentioned reviewers except author: ${mentioned}`);
+            core.info(`mentioned reviewers except author: ${extraEngineers}`);
+            core.info(`task linked via api: ${gql.repository.pullRequest.closingIssuesReferences}`);
+            core.info(`task in description: ${TASK_LINK_REGEX.exec(body)}`);
+            core.info(`task in title: ${numberInTitleRe.exec(title)}`);
+            
+            core.endGroup();
 
             // All good: clear old "request changes"
             if (problems.length === 0) {
