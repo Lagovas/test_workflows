@@ -109,8 +109,7 @@ jobs:
             core.info(`event requested_reviewer: ${requested_reviewers}`);
             core.info(`mentioned reviewers except author: ${mentioned}`);
             core.info(`mentioned reviewers except author: ${extraEngineers}`);
-            const task_references = gql.repository.pullRequest.closingIssuesReferences;
-            core.info(`task linked via api: ${JSON.stringify(task_references.nodes.map(n => n.url))}`);
+            core.info(`task linked via api: ${gql.repository.pullRequest.closingIssuesReferences.totalCount}`);
             core.info(`task in description: ${TASK_LINK_REGEX.exec(body)}`);
             core.info(`task in title: ${numberInTitleRe.exec(title)}`);
             
