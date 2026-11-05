@@ -54,7 +54,7 @@ jobs:
             const hasTask = linkedViaApi || numberInTitle || linkInBody;
 
             // Check that PR has assigned 1 reviewer and 1+ mentioned in description
-            const requested_reviewers = pr.requested_reviewers
+            const requested_reviewers = (pr.requested_reviewers  ?? [])
               .filter(a => a.type !== 'Bot')
               .map(a => a.login.toLowerCase());
 
