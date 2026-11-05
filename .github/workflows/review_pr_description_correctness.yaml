@@ -47,7 +47,8 @@ jobs:
               { owner, repo, number }
             );
             const linkedViaApi = gql.repository.pullRequest.closingIssuesReferences.totalCount > 0;
-            const numberInTitleRe = /(?<![\w.\/-])#?\d+(?![\w.\/-])/;
+            // in format "#{num}"
+            const numberInTitleRe = /(?<![\w.\/-])#\d+(?![\w.\/-])/;
             const numberInTitle = numberInTitleRe.test(title);
             const linkInBody = TASK_LINK_REGEX.test(body);
             const hasTask = linkedViaApi || numberInTitle || linkInBody;
@@ -108,7 +109,8 @@ jobs:
             core.info(`event requested_reviewer: ${requested_reviewers}`);
             core.info(`mentioned reviewers except author: ${mentioned}`);
             core.info(`mentioned reviewers except author: ${extraEngineers}`);
-            core.info(`task linked via api: ${gql.repository.pullRequest.closingIssuesReferences}`);
+            const task_references = gql.repository.pullRequest.closingIssuesReferences;
+            core.info(`task linked via api: ${JSON.stringify(task_references.nodes.map(n => n.url))}`);
             core.info(`task in description: ${TASK_LINK_REGEX.exec(body)}`);
             core.info(`task in title: ${numberInTitleRe.exec(title)}`);
             
